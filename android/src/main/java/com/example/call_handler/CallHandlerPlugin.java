@@ -1,5 +1,6 @@
 package com.example.call_handler;
 
+
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -7,16 +8,15 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Bundle;
 import android.util.Log;
-
 import androidx.annotation.NonNull;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.FirebaseApp;
+import com.google.firebase.iid.FirebaseInstanceId;
+import com.google.firebase.iid.InstanceIdResult;
+import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.RemoteMessage;
-
-import java.util.HashMap;
-import java.util.Map;
-
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
@@ -24,7 +24,12 @@ import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
+import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry.NewIntentListener;
+import io.flutter.plugin.common.PluginRegistry.Registrar;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 /** CallHandlerPlugin */
 public class CallHandlerPlugin extends BroadcastReceiver
@@ -38,6 +43,13 @@ public class CallHandlerPlugin extends BroadcastReceiver
   private Context applicationContext;
   private Activity mainActivity;
 
+  public static void registerWith(Registrar registrar) {
+    CallHandlerPlugin instance = new CallHandlerPlugin();
+    instance.setActivity(registrar.activity());
+    registrar.addNewIntentListener(instance);
+    instance.onAttachedToEngine(registrar.context(), registrar.messenger());
+  }
+
   private void onAttachedToEngine(Context context, BinaryMessenger binaryMessenger) {
     Log.d(TAG, "attached [CallFirebaseMessagingPlugin] to engine");
     this.applicationContext = context;
@@ -47,9 +59,13 @@ public class CallHandlerPlugin extends BroadcastReceiver
 
     // Register broadcast receiver
     IntentFilter intentFilter = new IntentFilter();
-    intentFilter.addAction(ACTION_REMOTE_MESSAGE);
+    intentFilter.addAction(ACCEPT_CALL);
     LocalBroadcastManager manager = LocalBroadcastManager.getInstance(applicationContext);
     manager.registerReceiver(this, intentFilter);
+  }
+
+  private void setActivity(Activity flutterActivity) {
+    this.mainActivity = flutterActivity;
   }
 
   @Override
@@ -69,7 +85,12 @@ public class CallHandlerPlugin extends BroadcastReceiver
     if ("configure".equals(call.method)) {
 
       if (mainActivity != null) {
-        sendMessageFromIntent("onLaunch", mainActivity.getIntent());
+        String action = mainActivity.getIntent().getAction();
+        if (action.equals(ACCEPT_CALL)) {
+          RemoteMessage message = mainActivity.getIntent().getParcelableExtra(EXTRA_REMOTE_MESSAGE);
+          Map<String, Object> content = parseRemoteMessage(message);
+          channel.invokeMethod("onLaunch", content);
+        }
       }
       result.success(null);
     } else {
@@ -81,15 +102,17 @@ public class CallHandlerPlugin extends BroadcastReceiver
   @Override
   public void onReceive(Context context, Intent intent) {
     String action = intent.getAction();
+    Log.d(TAG, "[onReceive] new action: " + action);
 
     if (action == null) {
       return;
     }
 
-    if (action.equals(ACTION_REMOTE_MESSAGE)) {
+    if (action.equals(ACCEPT_CALL)) {
       RemoteMessage message =
               intent.getParcelableExtra(EXTRA_REMOTE_MESSAGE);
       Map<String, Object> content = parseRemoteMessage(message);
+      Log.d(TAG, "[onReceive] invoking onMessage");
       channel.invokeMethod("onMessage", content);
     }
   }
@@ -115,6 +138,7 @@ public class CallHandlerPlugin extends BroadcastReceiver
 
   @Override
   public boolean onNewIntent(Intent intent) {
+    Log.d(TAG, "new intent with action: " + intent.getAction());
     boolean res = sendMessageFromIntent("onResume", intent);
     if (res && mainActivity != null) {
       mainActivity.setIntent(intent);
@@ -124,12 +148,14 @@ public class CallHandlerPlugin extends BroadcastReceiver
 
   /** @return true if intent contained a message to send. */
   private boolean sendMessageFromIntent(String method, Intent intent) {
+    Log.d(TAG, "intent action: " + intent.getAction());
     if (ACCEPT_CALL.equals(intent.getAction())
             || ACCEPT_CALL.equals(intent.getStringExtra("click_action"))) {
       Map<String, Object> message = new HashMap<>();
       Bundle extras = intent.getExtras();
 
       if (extras == null) {
+        Log.d(TAG, "no extra value available so ignoring");
         return false;
       }
 
@@ -146,6 +172,7 @@ public class CallHandlerPlugin extends BroadcastReceiver
       message.put("notification", notificationMap);
       message.put("data", dataMap);
 
+      Log.d(TAG, "invoking method: " + method);
       channel.invokeMethod(method, message);
       return true;
     }

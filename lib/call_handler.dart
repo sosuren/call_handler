@@ -97,10 +97,13 @@ class CallFirebaseMessaging {
   Future<dynamic> _handleMethod(MethodCall call) async {
     switch (call.method) {
       case "onMessage":
+        print('[WP] on message called');
         return _onMessage(call.arguments.cast<String, dynamic>());
       case "onLaunch":
+        print('[WP] on launch called');
         return _onLaunch(call.arguments.cast<String, dynamic>());
       case "onResume":
+        print('[WP] on resume called');
         return _onResume(call.arguments.cast<String, dynamic>());
       default:
         throw UnsupportedError("Unrecognized JSON message");
